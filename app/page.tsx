@@ -56,7 +56,7 @@ export default function Home() {
 
   return (
     <main className="flex flex-col h-screen p-4 bg-gray-50">
-      <h1 className="text-2xl font-bold mb-4 text-center">🧠 AI Chat</h1>
+      <h1 className="text-2xl font-bold mb-4 text-center">🧠 Ashwin's Chat Bot</h1>
 
       <div className="flex-1 overflow-y-auto mb-4 space-y-3">
         {messages.map((m, i) => (
