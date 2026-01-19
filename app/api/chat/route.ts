@@ -4,6 +4,11 @@ const MODEL = "HuggingFaceTB/SmolLM3-3B:hf-inference";
 
 type Msg = { role: "system" | "user" | "assistant"; content: string };
 
+function stripThink(text: string) {
+  // Removes <think>...</think> blocks (case-insensitive) + trailing whitespace
+  return text.replace(/<think>[\s\S]*?<\/think>\s*/gi, "").trim();
+}
+
 export async function POST(req: Request) {
   const hfToken = process.env.HF_TOKEN;
   if (!hfToken) return new Response("Missing HF_TOKEN", { status: 500 });
@@ -23,8 +28,9 @@ export async function POST(req: Request) {
   const windowMs = 60 * 60 * 1000;
 
   const cur = bucket.get(key);
-  if (!cur || now > cur.resetAt) bucket.set(key, { count: 1, resetAt: now + windowMs });
-  else {
+  if (!cur || now > cur.resetAt) {
+    bucket.set(key, { count: 1, resetAt: now + windowMs });
+  } else {
     if (cur.count >= limit) {
       const retryAfter = Math.ceil((cur.resetAt - now) / 1000);
       return new Response("Rate limit reached. Try again later.", {
@@ -36,6 +42,27 @@ export async function POST(req: Request) {
   }
   // --------------------------------------------------------
 
+  // Add a system instruction to reduce the chance of <think> output.
+  // Still strip server-side because models may not always comply.
+  const safeMessages: Msg[] =
+    messages.length > 0 && messages[0].role === "system"
+      ? [
+          {
+            role: "system",
+            content:
+              "You are a helpful assistant. Do not include any hidden reasoning, chain-of-thought, or <think> tags. Only output the final answer.",
+          },
+          ...messages.filter((m) => m.role !== "system"),
+        ]
+      : [
+          {
+            role: "system",
+            content:
+              "You are a helpful assistant. Do not include any hidden reasoning, chain-of-thought, or <think> tags. Only output the final answer.",
+          },
+          ...messages,
+        ];
+
   const resp = await fetch("https://router.huggingface.co/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -44,7 +71,7 @@ export async function POST(req: Request) {
     },
     body: JSON.stringify({
       model: MODEL,
-      messages,
+      messages: safeMessages,
       temperature: 0.7,
       max_tokens: 256,
       stream: false,
@@ -57,7 +84,10 @@ export async function POST(req: Request) {
   }
 
   const data = await resp.json();
-  const answer = data?.choices?.[0]?.message?.content ?? "";
+  const raw = data?.choices?.[0]?.message?.content ?? "";
+  const answer = stripThink(raw);
 
-  return new Response(answer, { headers: { "Content-Type": "text/plain" } });
+  return new Response(answer, {
+    headers: { "Content-Type": "text/plain" },
+  });
 }
